@@ -1,0 +1,8 @@
+numpy==1.14.5
+pandas==0.22.0
+tensorboard==1.8.0
+tensorboardX==1.4
+tensorflow==1.8.0
+torch==0.4.1
+torchtext==0.3.0
+tqdm==4.7.2

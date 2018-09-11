@@ -1,0 +1,3 @@
+[submodule "cMedQA"]
+	path = cMedQA
+	url = https://github.com/zhangsheng93/cMedQA.git
