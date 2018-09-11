@@ -2,6 +2,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from utility import auto_rnn_bilstm, fit_seq_max_len
 
 
 class QA_StackMultiCNN(nn.Module):
@@ -80,6 +81,7 @@ class QA_AP_StackMultiCNN(nn.Module):
     '''
     use Attentive Polling
     '''
+
     def __init__(self, vocab_size, embed_dim, embed_weight=None):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim, _weight=embed_weight)
@@ -135,20 +137,27 @@ class QA_AP_StackMultiCNN(nn.Module):
         return sim
 
 
-class QA_LSTM(nn.Module):
-    def __init__(self, vocab_size, embed_dim, embed_weight=None):
-        super().__init__()
-        hidden_size = 300
-        self.embed = nn.Embedding(vocab_size, embed_dim, _weight=embed_weight)
-        self.lstm = nn.LSTM(embed_dim, hidden_size, 1, batch_first=True, bidirectional=True)
+class StackBiLSTM(nn.Module):
+    def __init__(self, vocab_size, embedding_dim, hidden_size, mlp_d=1600, dropout_r=0.1, embed_weight=None):
+        super(StackBiLSTM, self).__init__()
+        self.embed = nn.Embedding(vocab_size, embedding_dim, _weight=embed_weight)
 
-        self.cos = nn.CosineSimilarity(dim=1)
-        self.distance = nn.PairwiseDistance()
+        self.lstm_1 = nn.LSTM(input_size=embedding_dim, hidden_size=hidden_size[0],
+                              num_layers=1, batch_first=True, bidirectional=True)
 
-        self.sim = nn.Sequential(
-            nn.Linear(3, 1),
-            nn.ReLU(inplace=True)
-        )
+        self.lstm_2 = nn.LSTM(input_size=(embedding_dim + hidden_size[0] * 2), hidden_size=hidden_size[1],
+                              num_layers=1, batch_first=True, bidirectional=True)
+
+        self.lstm_3 = nn.LSTM(input_size=(embedding_dim + (hidden_size[0] + hidden_size[1]) * 2),
+                              hidden_size=hidden_size[2], num_layers=1, batch_first=True, bidirectional=True)
+
+        self.mlp_1 = nn.Linear(hidden_size[2] * 2 * 4, mlp_d)
+        self.mlp_2 = nn.Linear(mlp_d, mlp_d)
+        self.sm = nn.Linear(mlp_d, 1)
+
+        self.classifier = nn.Sequential(*[self.mlp_1, nn.ReLU(), nn.Dropout(dropout_r),
+                                          self.mlp_2, nn.ReLU(), nn.Dropout(dropout_r),
+                                          self.sm])
 
     def forward(self, question, answer):
         question, question_length = question
@@ -156,23 +165,23 @@ class QA_LSTM(nn.Module):
         bs = question.size(0)
         sent = torch.cat((question, answer), dim=0)  # (bs, sen)
         sent_len = torch.cat((question_length, answer_length), dim=0)
+        sent = fit_seq_max_len(sent, sent_len)
+
         embed = self.embed(sent)  # (bs, sent, vector)
-        _, idx_sort = torch.sort(sent_len, dim=0, descending=True)
-        _, idx_unsort = torch.sort(idx_sort, dim=0)
-        embed = embed.index_select(0, idx_sort)
-        sent_len = sent_len[idx_sort]
-        embed_pack = nn.utils.rnn.pack_padded_sequence(embed, sent_len, batch_first=True)
+        lstm_layer1_out = auto_rnn_bilstm(self.lstm_1, embed, sent_len)  # lstm_out (bs, T=sent, D=2*hidden_size)
 
-        lstm_out, (hn, cn) = self.lstm(embed_pack)  # lstm_out (bs, sent, 2*hidden_size)
-        lstm_out = nn.utils.rnn.pad_packed_sequence(lstm_out, batch_first=True)[0]
-        lstm_out = lstm_out.index_select(0, idx_unsort)
+        layer2_in = torch.cat([embed, lstm_layer1_out], dim=2)
+        lstm_layer2_out = auto_rnn_bilstm(self.lstm_2, layer2_in, sent_len)
 
-        out = torch.max(lstm_out, dim=1)[0]  # (bs, 2H)
-        # out_mean = torch.mean(lstm_out, dim=1)[0]  # (bs, 2H)
+        layer3_in = torch.cat([embed, lstm_layer1_out, lstm_layer2_out], dim=2)
+        lstm_layer3_out = auto_rnn_bilstm(self.lstm_3, layer3_in, sent_len)
 
-        cos = self.cos(out[:bs], out[bs:]).unsqueeze(1)
-        distance = self.distance(out[:bs], out[bs:]).unsqueeze(1)
-        dot = torch.matmul(out[:bs].unsqueeze(1), out[bs:].unsqueeze(2)).squeeze(2)
+        lstm_layer3_maxout = torch.max(lstm_layer3_out, dim=1)[0]  # (bs, D)
 
-        sim = self.sim(torch.cat([cos, distance, dot], 1))
-        return sim
+        features = torch.cat([lstm_layer3_maxout[:bs], lstm_layer3_maxout[bs:],
+                              torch.abs(lstm_layer3_maxout[:bs] - lstm_layer3_maxout[bs:]),
+                              lstm_layer3_maxout[:bs] * lstm_layer3_maxout[bs:]],
+                             dim=1)
+
+        out = self.classifier(features)
+        return out
