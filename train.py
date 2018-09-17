@@ -239,7 +239,5 @@ def run():
     # writer.add_embedding(model.embed.weight.detach(), vocab.itos, global_step=epoch)
 
 
-
-
 if __name__ == '__main__':
     run()

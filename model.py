@@ -35,17 +35,19 @@ class SamePadConv1D(nn.Conv1d):
 
 
 class StackCNN(nn.Module):
-    def __init__(self, vocab_size, embed_dim, kernel_sizes=[2, 3], out_channels=[800, 800], embed_weight=None):
+    def __init__(self, vocab_size, embed_dim, kernel_sizes=(2, 3), out_channels=(800, 800), embed_weight=None):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim, _weight=embed_weight)
 
-        self.stack_conv = nn.Sequential()
+        stack_conv = []
         in_channels = embed_dim
         for ks, oc in zip(kernel_sizes, out_channels):
-            self.stack_conv.add_module(SamePadConv1D(in_channels, oc, ks))
-            self.stack_conv(nn.ReLU(inplace=True))
+            stack_conv.append(SamePadConv1D(in_channels, oc, ks))
+            stack_conv.append(nn.ReLU(inplace=True))
             in_channels = oc
-        self.cos = nn.CosineSimilarity(dim=1)
+        stack_conv.append(nn.AdaptiveMaxPool1d(1))
+        self.stack_conv = nn.Sequential(*stack_conv)
+        self.similarity = nn.CosineSimilarity(dim=1)
 
     def forward(self, question, answer):
         question, question_length = question
@@ -55,33 +57,72 @@ class StackCNN(nn.Module):
         embed = self.embed(sent)
         embed = embed.transpose(1, 2)
 
-        conv3 = self.conv3(embed)
-        conv4 = self.conv4(embed)
-        stack_conv = self.stack_conv(embed)
-        out3 = torch.max(conv3, dim=2)[0]
-        out4 = torch.max(conv4, dim=2)[0]
-        stack_out = torch.max(stack_conv, dim=2)[0]
+        cnn_out = self.stack_conv(embed)
+        cnn_out = cnn_out.squeeze(2)
 
-        q_out = torch.cat((out3[:bs], out4[:bs], stack_out[:bs]), dim=1)
-        a_out = torch.cat((out3[bs:], out4[bs:], stack_out[bs:]), dim=1)
+        q_out = cnn_out[:bs]
+        a_out = cnn_out[bs:]
+        sim = self.similarity(q_out, a_out)
+        return sim
 
-        out = self.cos(q_out, a_out)
-        return out
+
+class MultiCNN(nn.Module):
+    def __init__(self, vocab_size, embed_dim, kernel_sizes=(3, 4), out_channels=(800, 800), embed_weight=None):
+        super().__init__()
+        self.embed = nn.Embedding(vocab_size, embed_dim, _weight=embed_weight)
+
+        self.multi_conv = nn.ModuleList()
+        for ks, oc in zip(kernel_sizes, out_channels):
+            self.multi_conv.append(nn.Sequential(
+                SamePadConv1D(embed_dim, oc, ks),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveMaxPool1d(1)
+            ))
+        self.similarity = nn.CosineSimilarity(dim=1)
+
+    def forward(self, question, answer):
+        question, question_length = question
+        answer, answer_length = answer
+        bs = question.size(0)
+        sent = torch.cat((question, answer), dim=0)
+        embed = self.embed(sent)
+        embed = embed.transpose(1, 2)
+
+        cnn_out = [conv(embed) for conv in self.multi_conv]
+        cnn_out = torch.cat(cnn_out, dim=1)
+        cnn_out = cnn_out.squeeze(2)
+
+        q_out = cnn_out[:bs]
+        a_out = cnn_out[bs:]
+        sim = self.similarity(q_out, a_out)
+        return sim
 
 
 class StackMultiCNN(nn.Module):
-    def __init__(self, vocab_size, embed_dim, embed_weight=None):
+    def __init__(self, vocab_size, embed_dim, embed_weight=None,
+                 stack_kernel_sizes=(2, 3), stack_out_channels=(800, 800),
+                 multi_kernel_sizes=(3, 4), multi_out_channels=(800, 800)):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_dim, _weight=embed_weight)
-        self.conv3 = SamePadConv1D(embed_dim, 800, 3)
-        self.conv4 = SamePadConv1D(embed_dim, 800, 4)
-        self.stack_conv = nn.Sequential(
-            SamePadConv1D(embed_dim, 800, 2),
-            nn.ReLU(inplace=True),
-            SamePadConv1D(800, 800, 3),
-            nn.ReLU(inplace=True)
-        )
-        self.cos = nn.CosineSimilarity(dim=1)
+
+        stack_conv = []
+        in_channels = embed_dim
+        for ks, oc in zip(stack_kernel_sizes, stack_out_channels):
+            stack_conv.append(SamePadConv1D(in_channels, oc, ks))
+            stack_conv.append(nn.ReLU(inplace=True))
+            in_channels = oc
+        stack_conv.append(nn.AdaptiveMaxPool1d(1))
+        self.stack_conv = nn.Sequential(*stack_conv)
+
+        self.multi_conv = nn.ModuleList()
+        for ks, oc in zip(multi_kernel_sizes, multi_out_channels):
+            self.multi_conv.append(nn.Sequential(
+                SamePadConv1D(embed_dim, oc, ks),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveMaxPool1d(1)
+            ))
+
+        self.similarity = nn.CosineSimilarity(dim=1)
 
     def forward(self, question, answer):
         question, question_length = question
@@ -91,18 +132,17 @@ class StackMultiCNN(nn.Module):
         embed = self.embed(sent)
         embed = embed.transpose(1, 2)
 
-        conv3 = self.conv3(embed)
-        conv4 = self.conv4(embed)
-        stack_conv = self.stack_conv(embed)
-        out3 = torch.max(conv3, dim=2)[0]
-        out4 = torch.max(conv4, dim=2)[0]
-        stack_out = torch.max(stack_conv, dim=2)[0]
+        stack_out = self.stack_conv(embed)  # (B, C, 1)
+        multi_out = [conv(embed) for conv in self.multi_conv]  # [(B, C, 1), ...]
 
-        q_out = torch.cat((out3[:bs], out4[:bs], stack_out[:bs]), dim=1)
-        a_out = torch.cat((out3[bs:], out4[bs:], stack_out[bs:]), dim=1)
+        multi_out.append(stack_out)
+        cnn_out = torch.cat(multi_out, dim=1)
+        cnn_out = cnn_out.squeeze(2)
 
-        out = self.cos(q_out, a_out)
-        return out
+        q_out = cnn_out[:bs]
+        a_out = cnn_out[bs:]
+        sim = self.similarity(q_out, a_out)
+        return sim
 
 
 class NormStackMultiCNN(nn.Module):
