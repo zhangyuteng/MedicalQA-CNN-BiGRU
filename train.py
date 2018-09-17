@@ -109,8 +109,17 @@ def run():
     test_loader = torchtext.data.BucketIterator(test_dataset, args.batch_size, device=device, train=False,
                                                 shuffle=False, sort=False, repeat=False)
     # 创建模型，优化器，损失函数
-    if args.arch == 'stack_multi':
-        model = StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors).to(device)
+    if args.arch == 'stack':
+        model = StackCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+                         kernel_sizes=args.stack_kernel_sizes, out_channels=args.stack_out_channels).to(device)
+    elif args.arch == 'multi':
+        model = MultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+                         kernel_sizes=args.multi_kernel_sizes, out_channels=args.multi_out_channels).to(device)
+    elif args.arch == 'stack_multi':
+        model = StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+                              stack_kernel_sizes=args.stack_kernel_sizes, stack_out_channels=args.stack_out_channels,
+                              multi_kernel_sizes=args.multi_kernel_sizes, multi_out_channels=args.multi_out_channels
+                              ).to(device)
     elif args.arch == 'norm_stack_multi':
         model = NormStackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), sent_length=args.fix_length,
                                   embed_weight=vectors).to(device)
@@ -141,7 +150,8 @@ def run():
                            dropout_r=args.dropout, embed_weight=vectors).to(device)
     elif args.arch == 'stack_bigru':
         hidden_size = [int(i) for i in args.hidden_size.split(',')]
-        model = StackBiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size, mlp_d=args.mlp_d,
+        model = StackBiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
+                           mlp_d=args.mlp_d,
                            sent_max_length=args.fix_length, dropout_r=args.dropout, embed_weight=vectors).to(device)
     elif args.arch == 'cnn_share_bigru':
         assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
@@ -222,7 +232,8 @@ def run():
                           'architecture': architecture, 'model': model.state_dict(),
                           'optimizer': optimizer.state_dict()}
             torch.save(save_state, f'{model_dir}/{architecture}_epoch_{epoch}.pth')
-            logger.info('Save best model: epoch {}, dev accuracy {}, test accuracy'.format(epoch, dev_accuracy, test_accuracy))
+            logger.info(
+                'Save model: epoch {}, dev accuracy {}, test accuracy {}'.format(epoch, dev_accuracy, test_accuracy))
             # 计算模型运行时间
             duration = time.time() - start_time
             logger.info('Epoch {} finished in {:.2f} minutes'.format(epoch, duration / 60))

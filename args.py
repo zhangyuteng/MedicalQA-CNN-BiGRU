@@ -7,7 +7,8 @@ def parse_args(args=None):
         'Train a Chinese Medical Question Answer Matching model.'
     )
     parser.add_argument("--arch",
-                        choices=['stack_multi', 'norm_stack_multi', 'stack_multi_atten', 'ap_stack_multi',
+                        choices=['stack', 'multi', 'stack_multi', 'norm_stack_multi',
+                                 'stack_multi_atten', 'ap_stack_multi',
                                  'bilstm', 'stack_bilstm',
                                  'bigru', 'share_bigru', 'stack_bigru', 'cnn_share_bigru'],
                         default='QA_StackMultiCNN',
@@ -60,6 +61,11 @@ def parse_args(args=None):
     parser.add_argument('--resume-snapshot', type=str, default=None)
     parser.add_argument('--skip-training', help='will load pre-trained model', action='store_true', default=False)
 
+    parser.add_argument('--stack-kernel-sizes', type=str, default='2,3')
+    parser.add_argument('--stack-out-channels', type=str, default='800,800')
+    parser.add_argument('--multi-kernel-sizes', type=str, default='3,4')
+    parser.add_argument('--multi-out-channels', type=str, default='800,800')
+
     stack_lstm_group = parser.add_argument_group('StackLSTM')
     stack_lstm_group.add_argument('--hidden-size', type=str, default='200,200,200')
     stack_lstm_group.add_argument('--mlp-d', type=int, default='1024')
@@ -69,4 +75,8 @@ def parse_args(args=None):
 
     arguments = parser.parse_args(args)
     assert 0 < arguments.train_rate <= 1, '--train-rate must be greater than 0 and less than or equal to 1'
+    arguments.stack_kernel_sizes = [int(i) for i in arguments.stack_kernel_sizes.split(',')]
+    arguments.stack_out_channels = [int(i) for i in arguments.stack_out_channels.split(',')]
+    arguments.multi_kernel_sizes = [int(i) for i in arguments.multi_kernel_sizes.split(',')]
+    arguments.multi_out_channels = [int(i) for i in arguments.multi_out_channels.split(',')]
     return arguments
