@@ -81,7 +81,7 @@ def run():
     if torch.cuda.is_available() and args.device >= 0:
         # 开启这个flag需要保证输入数据的维度不变，不然每次cudnn都要重新优化，反而更加耗时
         # 现在RNN部分输入会进行fit length，CNN那里可以启用这个参数
-        if args.arch in ['stack_multi', 'norm_stack_multi', 'stack_multi_atten', 'ap_stack_multi']:
+        if args.arch in ['stack', 'multi', 'stack_multi', 'norm_stack_multi', 'stack_multi_atten', 'ap_stack_multi']:
             torch.backends.cudnn.benchmark = True
     # 输出目录
     if args.resume_snapshot:
@@ -118,8 +118,7 @@ def run():
     elif args.arch == 'stack_multi':
         model = StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
                               stack_kernel_sizes=args.stack_kernel_sizes, stack_out_channels=args.stack_out_channels,
-                              multi_kernel_sizes=args.multi_kernel_sizes, multi_out_channels=args.multi_out_channels
-                              ).to(device)
+                              multi_kernel_sizes=args.multi_kernel_sizes, multi_out_channels=args.multi_out_channels).to(device)
     elif args.arch == 'norm_stack_multi':
         model = NormStackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), sent_length=args.fix_length,
                                   embed_weight=vectors).to(device)
