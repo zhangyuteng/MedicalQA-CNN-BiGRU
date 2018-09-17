@@ -6,62 +6,6 @@ import torchtext
 import logging
 import time
 import pandas as pd
-import argparse
-
-
-def parse_args(args=None):
-    parser = argparse.ArgumentParser(
-        'Train a Chinese Medical Question Answer Matching model.'
-    )
-    parser.add_argument("--arch",
-                        choices=['stack_multi', 'stack_multi_atten', 'ap_stack_multi', 'stack_lstm'],
-                        default='QA_StackMultiCNN',
-                        help="model architecture to use (default: stack_multi)")
-    parser.add_argument("--dataset-dir",
-                        type=str,
-                        default='./cMedQA',
-                        help="dataset directory, default is cMedQA")
-    parser.add_argument("--out-dir",
-                        type=str,
-                        default='./output',
-                        help="output directory, default is current directory")
-    parser.add_argument("--remark", type=str, default='', help='remark')
-    parser.add_argument('--seed', type=int, default=1234,
-                        help="random seed, default 1234,"
-                             "set seed to -1 if need a random seed"
-                             "between 1 and 100000")
-    parser.add_argument('--train-rate', type=float, default=1,
-                        help='Use the rate of the training data set (default: 1)')
-    parser.add_argument('--tensorboard', action='store_true', default=True,
-                        help='use TensorBoard to visualize training (default: false)')
-    parser.add_argument('--word_vectors', help='word vectors file',
-                        default='/home/ailab/zhangyuteng/Castor-data/embeddings/ChineseVector/WordCharacter/'
-                                'sgns.target.word-character.char1-2.dynwin5.thr10.neg5.dim300.iter5')
-    parser.add_argument('--device', type=int, default=0, help='GPU device, -1 for CPU (default: 0)')
-    parser.add_argument('--dropout', type=float, default=0.1)
-    parser.add_argument('--fix-length', type=int, default=400, help='limit sentence length (default: 400)')
-    parser.add_argument('--batch-size', type=int, default=128, help='input batch size for training (default: 64)')
-    parser.add_argument('--epochs', type=int, default=100, help='number of epochs to train (default: 10)')
-    parser.add_argument('--optimizer', type=str, default='adam', help='optimizer to use: adam or sgd (default: adam)')
-    parser.add_argument('--lr', type=float, default=0.001, help='learning rate (default: 0.001)')
-    parser.add_argument('--lr-reduce-factor', type=float, default=0.3,
-                        help='learning rate reduce factor after plateau (default: 0.3)')
-    # 当监测值不再改善时，该回调函数将中止训练
-    parser.add_argument('--early-stopping', type=float, default=0.00002,
-                        help='Stop training when a monitored quantity has stopped improving.(default: 0.00002)')
-    # 如果patience个epoch后
-    parser.add_argument('--patience', type=float, default=2,
-                        help='learning rate patience after seeing plateau (default: 2)')
-    # 载入模型
-    parser.add_argument('--resume-snapshot', type=str, default=None)
-    parser.add_argument('--skip-training', help='will load pre-trained model', action='store_true', default=False)
-
-    stack_lstm_group = parser.add_argument_group('StackLSTM')
-    stack_lstm_group.add_argument('--hidden-size', type=str, default='512,1024,2048')
-
-    arguments = parser.parse_args()
-    assert 0 < arguments.train_rate <= 1, '--train-rate must be greater than 0 and less than or equal to 1'
-    return arguments
 
 
 def get_accuracy(qids, predictions, labels, topk=1):
@@ -103,8 +47,8 @@ def pack_for_rnn_seq(embed_seq, seq_len):
     return packed_seq, idx_unsort
 
 
-def unpack_from_rnn_seq(packed_seq, idx_unsort):
-    unpacked_seq, _ = nn.utils.rnn.pad_packed_sequence(packed_seq, batch_first=True)
+def unpack_from_rnn_seq(packed_seq, idx_unsort, total_length=None):
+    unpacked_seq, _ = nn.utils.rnn.pad_packed_sequence(packed_seq, batch_first=True, total_length=total_length)
     unsort_seq = unpacked_seq.index_select(0, idx_unsort)
     return unsort_seq
 
@@ -123,11 +67,35 @@ def fit_seq_max_len(seq, seq_len):
     return seq
 
 
-def auto_rnn_bilstm(lstm, embed_seq, lengths):
-    packed_seq, id_unsort = pack_for_rnn_seq(embed_seq, lengths)
+def auto_rnn_bilstm(lstm, embed_seq, lengths, fix_length=False):
+    packed_seq, idx_unsort = pack_for_rnn_seq(embed_seq, lengths)
     output, (hn, cn) = lstm(packed_seq)
-    unpacked_output = unpack_from_rnn_seq(output, id_unsort)
-    return unpacked_output
+    total_length = None
+    if fix_length:
+        total_length = embed_seq.size(1)
+    unpacked_output = unpack_from_rnn_seq(output, idx_unsort, total_length)
+    hn_unsort = hn.index_select(1, idx_unsort)
+    cn_unsort = cn.index_select(1, idx_unsort)
+    return unpacked_output, (hn_unsort, cn_unsort)
+
+
+def auto_rnn_bigru(gru, embed_seq, lengths, fix_length=False):
+    """
+    自动对变长序列做pack和pad操作
+    :param gru:
+    :param embed_seq:
+    :param lengths:
+    :param fix_length: 是否固定输出的结果，默认会变长序列中最长那个序列长度
+    :return:
+    """
+    packed_seq, idx_unsort = pack_for_rnn_seq(embed_seq, lengths)
+    output, hn = gru(packed_seq)
+    total_length = None
+    if fix_length:
+        total_length = embed_seq.size(1)
+    unpacked_output = unpack_from_rnn_seq(output, idx_unsort, total_length)
+    hn_unsort = hn.index_select(1, idx_unsort)
+    return unpacked_output, hn_unsort
 
 
 def get_logger(output_dir):
@@ -140,7 +108,7 @@ def get_logger(output_dir):
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-    ch = logging.FileHandler(f'{output_dir}/run.log')
+    ch = logging.FileHandler(f'{output_dir}/run.log', mode='a')
     ch.setLevel(logging.DEBUG)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
