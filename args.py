@@ -7,12 +7,14 @@ def parse_args(args=None):
         'Train a Chinese Medical Question Answer Matching model.'
     )
     parser.add_argument("--arch",
-                        choices=['stack', 'multi', 'stack_multi', 'norm_stack_multi',
-                                 'stack_multi_atten', 'ap_stack_multi',
-                                 'bilstm', 'stack_bilstm',
-                                 'bigru', 'share_bigru', 'stack_bigru', 'cnn_share_bigru'],
-                        default='QA_StackMultiCNN',
-                        help="model architecture to use (default: stack_multi)")
+                        choices=['stack', 'multi', 'stack_multi', 'bigru', 'bigru_cnn'
+                                 # 'norm_stack_multi',
+                                 # 'stack_multi_atten', 'ap_stack_multi',
+                                 # 'bilstm', 'stack_bilstm',
+                                 #  'stack_bigru'
+                                 ],
+                        default='bigru_cnn',
+                        help="model architecture to use (default: bigru_cnn)")
     parser.add_argument("--dataset-dir",
                         type=str,
                         default='./cMedQA',
@@ -28,6 +30,8 @@ def parse_args(args=None):
                              "between 1 and 100000")
     parser.add_argument('--train-rate', type=float, default=1,
                         help='Use the rate of the training data set (default: 1)')
+    parser.add_argument('--topk', type=str, default='1',
+                        help='evaluate top k (default: 1)')
     parser.add_argument('--tensorboard', action='store_true', default=True,
                         help='use TensorBoard to visualize training (default: false)')
     vector_path = None
@@ -61,16 +65,16 @@ def parse_args(args=None):
     parser.add_argument('--resume-snapshot', type=str, default=None)
     parser.add_argument('--skip-training', help='will load pre-trained model', action='store_true', default=False)
 
-    parser.add_argument('--stack-kernel-sizes', type=str, default='2,3')
-    parser.add_argument('--stack-out-channels', type=str, default='800,800')
-    parser.add_argument('--multi-kernel-sizes', type=str, default='3,4')
-    parser.add_argument('--multi-out-channels', type=str, default='800,800')
+    parser.add_argument('--stack-kernel-sizes', type=str, default='3,4')
+    parser.add_argument('--stack-out-channels', type=str, default='500,500')
+    parser.add_argument('--multi-kernel-sizes', type=str, default='1,2,3,5')
+    parser.add_argument('--multi-out-channels', type=str, default='500,500,500,500')
 
-    stack_lstm_group = parser.add_argument_group('StackLSTM')
-    stack_lstm_group.add_argument('--hidden-size', type=str, default='200,200,200')
+    stack_lstm_group = parser.add_argument_group('BiGRU')
+    stack_lstm_group.add_argument('--hidden-size', type=str, default='200')
     stack_lstm_group.add_argument('--mlp-d', type=int, default='1024')
 
-    cnn_share_bigru_group = parser.add_argument_group('CNNShareBiGRU')
+    cnn_share_bigru_group = parser.add_argument_group('BiGRU-CNN')
     cnn_share_bigru_group.add_argument('--cnn-channel', type=int, default='500')
 
     arguments = parser.parse_args(args)
@@ -79,4 +83,8 @@ def parse_args(args=None):
     arguments.stack_out_channels = [int(i) for i in arguments.stack_out_channels.split(',')]
     arguments.multi_kernel_sizes = [int(i) for i in arguments.multi_kernel_sizes.split(',')]
     arguments.multi_out_channels = [int(i) for i in arguments.multi_out_channels.split(',')]
+    if isinstance(arguments.topk, int):
+        arguments.topk = [arguments.topk]
+    else:
+        arguments.topk = [int(i) for i in arguments.topk.split(',')]
     return arguments

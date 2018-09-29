@@ -47,7 +47,7 @@ def train_epoch(epoch, data_loader, model, optimizer, loss_fn, device):
     return np.mean(total_loss)
 
 
-def evaluate(date_loader, model):
+def evaluate(date_loader, model, topk):
     """
     在dev上进行测试
     """
@@ -63,9 +63,17 @@ def evaluate(date_loader, model):
             true_labels.extend(batch.label.cpu().numpy())
             output = model(batch.question, batch.answer)
             predictions.extend(output.cpu().numpy())
-
-    accuracy = get_accuracy(qids, predictions, true_labels)
-    return accuracy
+    if isinstance(topk, int):
+        accuracy = get_accuracy(qids, predictions, true_labels, 1)
+        return accuracy
+    elif isinstance(topk, list):
+        accuracies = {}
+        for i in topk:
+            accuracy = get_accuracy(qids, predictions, true_labels, i)
+            accuracies[i] = accuracy
+        return accuracies
+    else:
+        raise ValueError('Error topk')
 
 
 def run():
@@ -101,6 +109,7 @@ def run():
     logger.info(f'output dir is {output_dir}')
     # 获取数据集
     train_dataset, dev_dataset, test_dataset, vocab, vectors = get_dataset(args, logger)
+    vectors_dim = 300 if vectors is None else vectors.size(1)
     # 创建迭代器
     train_loader = torchtext.data.BucketIterator(train_dataset, args.batch_size, device=device, train=True,
                                                  shuffle=True, sort=False, repeat=False)
@@ -110,53 +119,54 @@ def run():
                                                 shuffle=False, sort=False, repeat=False)
     # 创建模型，优化器，损失函数
     if args.arch == 'stack':
-        model = StackCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+        model = StackCNN(vocab_size=len(vocab), embed_dim=vectors_dim, embed_weight=vectors,
                          kernel_sizes=args.stack_kernel_sizes, out_channels=args.stack_out_channels).to(device)
     elif args.arch == 'multi':
-        model = MultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+        model = MultiCNN(vocab_size=len(vocab), embed_dim=vectors_dim, embed_weight=vectors,
                          kernel_sizes=args.multi_kernel_sizes, out_channels=args.multi_out_channels).to(device)
     elif args.arch == 'stack_multi':
-        model = StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors,
+        model = StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors_dim, embed_weight=vectors,
                               stack_kernel_sizes=args.stack_kernel_sizes, stack_out_channels=args.stack_out_channels,
-                              multi_kernel_sizes=args.multi_kernel_sizes, multi_out_channels=args.multi_out_channels).to(device)
-    elif args.arch == 'norm_stack_multi':
-        model = NormStackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), sent_length=args.fix_length,
-                                  embed_weight=vectors).to(device)
-    elif args.arch == 'stack_multi_atten':
-        model = QA_StackMultiAttentionCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors).to(
-            device)
-    elif args.arch == 'ap_stack_multi':
-        model = QA_AP_StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors.size(1), embed_weight=vectors).to(
-            device)
-    elif args.arch == 'bilstm':
-        assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for LSTM model'
-        hidden_size = int(args.hidden_size)
-        model = BiLSTM(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
-                       dropout_r=args.dropout, embed_weight=vectors).to(device)
-    elif args.arch == 'stack_bilstm':
-        hidden_size = [int(i) for i in args.hidden_size.split(',')]
-        model = StackBiLSTM(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
-                            mlp_d=args.mlp_d, dropout_r=args.dropout, embed_weight=vectors).to(device)
+                              multi_kernel_sizes=args.multi_kernel_sizes, multi_out_channels=args.multi_out_channels
+                              ).to(device)
     elif args.arch == 'bigru':
         assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
         hidden_size = int(args.hidden_size)
-        model = BiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
+        model = BiGRU(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
                       dropout_r=args.dropout, embed_weight=vectors).to(device)
-    elif args.arch == 'share_bigru':
-        assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
-        hidden_size = int(args.hidden_size)
-        model = ShareBiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
-                           dropout_r=args.dropout, embed_weight=vectors).to(device)
-    elif args.arch == 'stack_bigru':
-        hidden_size = [int(i) for i in args.hidden_size.split(',')]
-        model = StackBiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
-                           mlp_d=args.mlp_d,
-                           sent_max_length=args.fix_length, dropout_r=args.dropout, embed_weight=vectors).to(device)
     elif args.arch == 'cnn_share_bigru':
         assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
         hidden_size = int(args.hidden_size)
-        model = CnnShareBiGRU(vocab_size=len(vocab), embedding_dim=vectors.size(1), hidden_size=hidden_size,
-                              cnn_channel=args.cnn_channel, dropout_r=args.dropout, embed_weight=vectors).to(device)
+        model = BiGRUCNN(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
+                         cnn_channel=args.cnn_channel, dropout_r=args.dropout, embed_weight=vectors).to(device)
+    # elif args.arch == 'norm_stack_multi':
+    #     model = NormStackMultiCNN(vocab_size=len(vocab), embed_dim=vectors_dim, sent_length=args.fix_length,
+    #                               embed_weight=vectors).to(device)
+    # elif args.arch == 'stack_multi_atten':
+    #     model = QA_StackMultiAttentionCNN(vocab_size=len(vocab), embed_dim=vectors_dim, embed_weight=vectors).to(
+    #         device)
+    # elif args.arch == 'ap_stack_multi':
+    #     model = QA_AP_StackMultiCNN(vocab_size=len(vocab), embed_dim=vectors_dim, embed_weight=vectors).to(
+    #         device)
+    # elif args.arch == 'bilstm':
+    #     assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for LSTM model'
+    #     hidden_size = int(args.hidden_size)
+    #     model = BiLSTM(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
+    #                    dropout_r=args.dropout, embed_weight=vectors).to(device)
+    # elif args.arch == 'stack_bilstm':
+    #     hidden_size = [int(i) for i in args.hidden_size.split(',')]
+    #     model = StackBiLSTM(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
+    #                         mlp_d=args.mlp_d, dropout_r=args.dropout, embed_weight=vectors).to(device)
+    # elif args.arch == 'bigru':
+    #     assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
+    #     hidden_size = int(args.hidden_size)
+    #     model = BiGRU(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
+    #                   dropout_r=args.dropout, embed_weight=vectors).to(device)
+    # elif args.arch == 'stack_bigru':
+    #     hidden_size = [int(i) for i in args.hidden_size.split(',')]
+    #     model = StackBiGRU(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
+    #                        mlp_d=args.mlp_d,
+    #                        sent_max_length=args.fix_length, dropout_r=args.dropout, embed_weight=vectors).to(device)
     else:
         raise ValueError("--arch is unknown")
     # 为特定模型指定特殊的优化函数
@@ -217,12 +227,12 @@ def run():
             writer.add_scalar('train/loss', loss, epoch)
             logger.info(f'Train Epoch {epoch}: loss={loss}')
             # evaluate
-            dev_accuracy = evaluate(dev_loader, model)
+            dev_accuracy = evaluate(dev_loader, model, 1)
             logger.info(f'Evaluation metrices: dev accuracy = {100. * dev_accuracy}%')
             writer.add_scalar('dev/lr', optimizer.param_groups[0]['lr'], epoch)
             writer.add_scalar('dev/acc', dev_accuracy, epoch)
             # 进行测试
-            test_accuracy = evaluate(test_loader, model)
+            test_accuracy = evaluate(test_loader, model, 1)
             logger.info(f'Evaluation metrices: test accuracy = {100. * test_accuracy}%')
             writer.add_scalar('test/acc', test_accuracy, epoch)
 
@@ -243,8 +253,13 @@ def run():
             prev_loss = loss
     else:
         # 进行测试
-        test_accuracy = evaluate(test_loader, model)
-        logger.info(f'Evaluation metrices: test accuracy = {100. * test_accuracy}%')
+        dev_accuracies = evaluate(dev_loader, model, args.topk)
+        for k in args.topk:
+            logger.info(f'Evaluation metrices: top-{k} dev accuracy = {dev_accuracies[k]}%')
+
+        test_accuracies = evaluate(test_loader, model, args.topk)
+        for k in args.topk:
+            logger.info(f'Evaluation metrices: top-{k} test accuracy = {test_accuracies[k]}%')
     # 保存embedding到tensorboard做可视化
     # writer.add_embedding(model.embed.weight.detach(), vocab.itos, global_step=epoch)
 
