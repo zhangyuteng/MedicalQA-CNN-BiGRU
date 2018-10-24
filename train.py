@@ -89,7 +89,7 @@ def run():
     if torch.cuda.is_available() and args.device >= 0:
         # 开启这个flag需要保证输入数据的维度不变，不然每次cudnn都要重新优化，反而更加耗时
         # 现在RNN部分输入会进行fit length，CNN那里可以启用这个参数
-        if args.arch in ['stack', 'multi', 'stack_multi', 'norm_stack_multi', 'stack_multi_atten', 'ap_stack_multi']:
+        if args.arch in ['stack', 'multi', 'stack_multi']:
             torch.backends.cudnn.benchmark = True
     # 输出目录
     if args.resume_snapshot:
@@ -134,7 +134,7 @@ def run():
         hidden_size = int(args.hidden_size)
         model = BiGRU(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,
                       dropout_r=args.dropout, embed_weight=vectors).to(device)
-    elif args.arch == 'cnn_share_bigru':
+    elif args.arch == 'bigru_cnn':
         assert args.hidden_size.find(',') == -1, '--hidden-size must be a int for BiLSTM/BiGRU model'
         hidden_size = int(args.hidden_size)
         model = BiGRUCNN(vocab_size=len(vocab), embedding_dim=vectors_dim, hidden_size=hidden_size,

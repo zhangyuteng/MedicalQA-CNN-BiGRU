@@ -39,7 +39,7 @@ def parse_args(args=None):
     if hostname == 'ailab-pc':
         vector_path = '/home/ailab/zhangyuteng/Castor-data/embeddings/ChineseVector/WordCharacter/' \
                       'sgns.target.word-character.char1-2.dynwin5.thr10.neg5.dim300.iter5'
-    elif hostname == 'pc':
+    elif hostname == 'sys51-Default-string':
         vector_path = './embedding/sgns.target.word-character.char1-2.dynwin5.thr10.neg5.dim300.iter5'
     required = False if vector_path is not None else True
     parser.add_argument('--word-vectors', help='word vectors file', required=required, default=vector_path)
